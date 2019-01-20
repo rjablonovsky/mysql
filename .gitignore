@@ -54,3 +54,4 @@ dkms.conf
 # products of scripts
 mysql_create_user_or_role.sql
 mysql_user_grants.sql
+mysql_dbdump.sql
