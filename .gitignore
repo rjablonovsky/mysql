@@ -50,3 +50,7 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# products of scripts
+mysql_create_user_or_role.sql
+mysql_user_grants.sql
