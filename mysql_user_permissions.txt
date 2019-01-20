@@ -1,0 +1,81 @@
+/*
+Developed and tested for mysql 8.0.13 
+*/
+
+/*
+Option 1: extract user grants from source mysql server using mysql client from command line
+	The solution is targeted to synchronize user privileges between source mysql server and target mysql server.
+	The users have to already exists on target server(s). If you need create users and roles use 
+	extract create user or role script
+
+### extract user grants from source mysql server using mysql client from command line. The command add ";" on the end of result lines using sed tool
+*/
+mysql -u root -p<password> --skip-column-names -A -e"SELECT CONCAT('SHOW GRANTS FOR ''',user,'''@''',host,''';') FROM mysql.user WHERE user<>''" | mysql -u root -p<password> --skip-column-names -A | sed s/$/;/ > mysql_user_grants.sql
+### apply extracted sql script on target mysql server:
+mysql -u root -<password> mysql < mysql_user_grants.sql
+mysql -u root -<password> -e "flush privileges;" mysql
+
+/*
+### extract create user or role script. The command add ";" on the end of result lines using sed tool
+*/
+mysql -u root -p<password> --skip-column-names -A -e"SELECT CONCAT('SHOW CREATE USER ''',user,'''@''',host,''';') FROM mysql.user WHERE user<>''" | mysql -u root -p<password> --skip-column-names -A | sed s/$/;/ > mysql_create_user_or_role.sql
+### apply extracted sql script on target mysql server:
+mysql -u root -<password> mysql < mysql_create_user_or_role.sql
+mysql -u root -<password> -e "flush privileges;" mysql
+
+
+/*
+Option 2: bakup mysql database from mysql server
+	This solution is targeted to synchronize mysql system db between source mysql server and target mysql server.
+	As we taking full backup/dbdump of mysql system db all users with their privileges and security
+	will be retored on target mysql server. 
+	NOTE: Restoring mysql backup on target mysql server will override all previous data in system tables
+		as the backup script will drop all system tables, create and populate them by script's data.
+		In case it is required to preserve some old users on target system with privileges and settings,
+		this solution is not appropriate!!!
+
+### Create mysql db backup/dump from source mysql server, using mysql from comandline, windows or linux.
+/*
+mysqldump -u root -p<password> mysql > mysql_dbdump.sql
+### restore mysql db:
+mysql -u root -<password> mysql < mysql_dbdump.sql
+mysql -u root -<password> -e "flush privileges;" mysql
+
+
+/*
+Option 3: extract user grants from source mysql server using mysql stored procedure
+	This solution is as last resort in case the mysql client is not available from command line (windows or unix)
+	or Option 1. is not possible to use for any reason(s). The users have to already exists on target server(s).
+	NOTE: SHOW CREATE USER statemenst is not supported as prepared statement on mysql ver 8.0.13
+
+### extract user grants from source mysql server using mysql stored procedure. The result sets did not have ";" on the end.
+*/
+-- drop and create stored procedure mysql.spShowGrantsForUsers
+DROP procedure IF EXISTS mysql.spShowGrantsForUsers;
+DELIMITER $$
+$$
+CREATE DEFINER=root@localhost PROCEDURE mysql.spShowGrantsForUsers(IN p_usermask VARCHAR(200))
+    READS SQL DATA
+    COMMENT 'Show GRANT statements for user(s). To see all users grand statements use: call spShowGrantsForUsers(null);'
+BEGIN
+	DECLARE v_show_grants_stmt VARCHAR(200) CHARACTER SET utf8;   
+    DECLARE c_userlist CURSOR FOR
+    SELECT DISTINCT CONCAT('SHOW GRANTS FOR ''',user,'''@''',host,''';') AS show_grants 
+    FROM mysql.user
+    WHERE user<>'' AND (user LIKE p_usermask OR p_usermask IS NULL);
+    DECLARE EXIT HANDLER FOR NOT FOUND BEGIN END;  
+    OPEN c_userlist;
+    WHILE TRUE DO
+        FETCH c_userlist INTO v_show_grants_stmt;
+        SET @v_show_grants_stmt = v_show_grants_stmt;
+        PREPARE stmt FROM @v_show_grants_stmt;
+        EXECUTE stmt;
+		DEALLOCATE PREPARE stmt;
+    END WHILE;
+    CLOSE c_userlist;
+END$$
+DELIMITER ;
+-- generate grant statements for all users
+call mysql.spShowGrantsForUsers(null);
+-- drop stored procedure mysql.spShowGrantsForUsers
+DROP procedure IF EXISTS mysql.spShowGrantsForUsers;
