@@ -13,7 +13,10 @@
 #          Expected error message type on application side: ERROR 2013 (HY000): Lost connection to MySQL server during query
 # Example: default - /usr/local/dba/scripts/killUserConnections.sh
 #          kill backup processes too - /usr/local/dba/scripts/killUserConnections.sh "svcMONyogApp,svcGlobalVars,nagios"
+#          Usage in crontab - 01 0 * * * /usr/local/dba/scripts/killUserConnections.sh "svcMONyogApp,svcGlobalVars,nagios" > /dev/null 2>&1
+#
 
+errcode=0
 param_list_excluded_dbusers="${1:-svcMONyogApp,svcGlobalVars,svcBackupRestore,nagios}"
 list_excluded_dbusers=""
 # retrieve list of excluded db users and clean it. Valid delimiters are " ", ",", ":", "|", "''"
@@ -34,8 +37,8 @@ PROCESS_SQL="
 SELECT PROCESSLIST_ID, PROCESSLIST_USER, PROCESSLIST_DB, PROCESSLIST_STATE, 
        PROCESSLIST_HOST, PROCESSLIST_COMMAND, PROCESSLIST_TIME 
 FROM performance_schema.threads 
-WHERE TYPE = 'FOREGROUND' AND NAME = 'thread/sql/one_connection'
-  AND PROCESSLIST_ID != connection_id() -- exclude current connection
+WHERE PROCESSLIST_ID != connection_id() -- exclude current connection 
+  AND TYPE = 'FOREGROUND' AND NAME = 'thread/sql/one_connection' 
   AND NOT(    PROCESSLIST_USER IN (${list_excluded_dbusers}) 
            OR PROCESSLIST_USER LIKE '%.dba' ) 
 ORDER BY PROCESSLIST_TIME DESC, PROCESSLIST_ID; "
@@ -46,6 +49,10 @@ KILL_SQL_FILE=${SCRIPT_DIR}/killUserConnectionsProcess.sql
 
 echo "BEGIN kill of MySQL user connections on ${LOCALHOST}:" $(date +%F_%H:%M:%S.%N) | tee -a "${LOG_FILE}"
 
+# SQL sanity check:
+mysql --login-path="${LOGIN_PATH_USER}" -e "explain ${PROCESS_SQL}" > /dev/null 2>>"${LOG_FILE}"; errcode=$?
+if [ $errcode -ne 0 ]; then printf "%s" "${PROCESS_SQL}" >> "${LOG_FILE}"; echo "ERROR IN SQL: ${LOG_FILE}"; exit $errcode; fi
+# Execute SQL:
 mysql --login-path="${LOGIN_PATH_USER}" -e "${PROCESS_SQL}" >> "${LOG_FILE}" 2>>"${LOG_FILE}"
 awk 'NR>2 {print "kill "$1"; "}' "${LOG_FILE}" > "${KILL_SQL_FILE}" 2>>"${LOG_FILE}"
 echo "SQL USED TO IDENTIFY PROCESSES TO KILL: ${PROCESS_SQL}" >> "${LOG_FILE}"
