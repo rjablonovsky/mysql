@@ -1,7 +1,7 @@
 #!/bin/bash
 # Owner: jablonovskyr.dba
 # Date Created: 2020-05-14
-# Last Date Modified: 2020-05-14
+# Last Date Modified: 2020-06-17
 # Primary Function: kill all user connections to mysql server
 # Log Location: The same as the script directory,  file - killUserConnections.log
 # Support files: The same as the script directory, file - killUserConnectionsProcess.sql
@@ -13,16 +13,18 @@
 #          Expected error message type on application side: ERROR 2013 (HY000): Lost connection to MySQL server during query
 # Example: default - /usr/local/dba/scripts/killUserConnections.sh
 #          kill backup processes too - /usr/local/dba/scripts/killUserConnections.sh "svcMONyogApp,svcGlobalVars,nagios"
-#          Usage in crontab - 01 0 * * * /usr/local/dba/scripts/killUserConnections.sh "svcMONyogApp,svcGlobalVars,nagios" > /dev/null 2>&1
+#          Usage in crontab - 05 0 * * * /usr/local/dba/scripts/killUserConnections.sh "svcMONyogApp,svcGlobalVars,nagios" > /dev/null 2>&1
 #
 
 errcode=0
 param_list_excluded_dbusers="${1:-svcMONyogApp,svcGlobalVars,svcBackupRestore,nagios}"
+list_email="${2:-rjablonov@gmail.com}" # list should be comma delimited. List is not cleaned or validated!
+send_email_flag="${3:-0}" # 0 - never. It is default, 1 - when db process(es) were killed, 2 - always
 list_excluded_dbusers=""
 # retrieve list of excluded db users and clean it. Valid delimiters are " ", ",", ":", "|", "''"
 IFS="|:', " read -r -a a <<< "${param_list_excluded_dbusers}"
 read -r -a b <<< $(echo "${a[@]}")
-# get proper SQL valid string for IN clause
+# get SQL valid string for IN clause
 list_excluded_dbusers="'${b[0]}'"
 for ((i=1;i<${#b[@]};i++)); do
   list_excluded_dbusers="${list_excluded_dbusers},'${b[i]}'"
@@ -61,3 +63,14 @@ echo "BEGIN execute SQL file with kill processes commands:" $(date +%F_%H:%M:%S.
 mysql --login-path="${LOGIN_PATH_USER}" < "${KILL_SQL_FILE}" >> "${LOG_FILE}" 2>>"${LOG_FILE}"
 
 echo "END kill of MySQL user connections on ${LOCALHOST}:" $(date +%F_%H:%M:%S.%N) | tee -a "${LOG_FILE}"
+
+# send email based on flag
+if [ $send_email_flag -eq 1 ]; then 
+  # send email only if file $KILL_SQL_FILE is not empty
+  if [ -s "${KILL_SQL_FILE}" ]; then 
+    cat "${LOG_FILE}"  | mail -s "MySQL connections terminated on ${LOCALHOST} by script killUserConnection.sh" "${list_email}"
+  fi
+# send email with notification
+elif [ $send_email_flag -eq 2 ]; then 
+  cat "${LOG_FILE}"  | mail -s "on ${LOCALHOST} script killUserConnection.sh was executed" "${list_email}"
+fi
